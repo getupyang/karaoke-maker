@@ -225,7 +225,38 @@
           <a class="download-btn" href="/download/${escapeHtml(data.job_id)}/accompaniment.mp3" download>
             下载伴奏 MP3
           </a>
+          <div id="lyricsStatus" style="margin-top:14px;font-size:0.85rem;color:#aaa;">歌词加载中…</div>
         </div>`;
+      pollLyrics(data.lyrics_url);
+    }
+
+    let lyricsTimer = null;
+    function pollLyrics(lyricsUrl) {
+      if (lyricsTimer) clearTimeout(lyricsTimer);
+      fetch(lyricsUrl)
+        .then(r => r.json())
+        .then(data => {
+          let lyrics = [];
+          if (data.status === "done" || data.status === "error") {
+            lyrics = data.lines || [];
+            const el = document.getElementById('lyricsStatus');
+            if (!el) return;
+            if (data.status === "error") {
+              el.textContent = '歌词获取失败';
+            } else if (lyrics.length === 0) {
+              el.textContent = '未找到歌词';
+            } else {
+              el.innerHTML = lyrics.map(l => `<div>${escapeHtml(l.text)}</div>`).join('');
+            }
+          } else {
+            // still processing (status === "processing" / 202)
+            lyricsTimer = setTimeout(() => pollLyrics(lyricsUrl), 3000);
+          }
+        })
+        .catch(() => {
+          const el = document.getElementById('lyricsStatus');
+          if (el) el.textContent = '歌词加载失败';
+        });
     }
 
     function showError(msg) {

@@ -99,14 +99,19 @@ def separate_vocals(audio_path: Path, job_dir: Path) -> Path:
 
 
 def _fetch_and_save_lyrics(url: str, audio_path: Path, job_dir: Path):
-    """后台线程：获取歌词并写入 lyrics.json。url 为空时直接走 Whisper。"""
+    """后台线程：获取歌词并写入 lyrics.json"""
     try:
         from karaoke import get_lyrics
         lyrics = get_lyrics(url if url else None, audio_path, job_dir)
-        data = [{"start": l.start, "end": l.end, "text": l.text} for l in lyrics]
-    except Exception:
-        data = []
-    (job_dir / "lyrics.json").write_text(_json.dumps(data, ensure_ascii=False))
+        data = {"status": "done", "lines": [{"start": l.start, "end": l.end, "text": l.text} for l in lyrics]}
+    except Exception as e:
+        import logging
+        logging.warning(f"lyrics fetch failed: {e}")
+        data = {"status": "error", "lines": []}
+    # atomic write: tmp file + rename
+    tmp = job_dir / "lyrics.json.tmp"
+    tmp.write_text(_json.dumps(data, ensure_ascii=False))
+    tmp.rename(job_dir / "lyrics.json")
 
 
 @app.route("/")
