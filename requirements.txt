@@ -1,0 +1,7 @@
+flask>=3.0.0
+yt-dlp>=2024.1.1
+demucs>=4.0.0
+torch==2.2.2
+torchaudio==2.2.2
+numpy<2
+soundfile>=0.12.0
