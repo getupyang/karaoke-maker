@@ -24,3 +24,9 @@ def test_process_no_input(client):
 def test_lyrics_not_found(client):
     resp = client.get("/lyrics/nonexistent")
     assert resp.status_code == 404
+
+def test_mix_missing_job(client):
+    resp = client.post("/mix/nonexistent",
+                       data={"audio": (b"fake audio data", "vocal.webm")},
+                       content_type="multipart/form-data")
+    assert resp.status_code == 404
