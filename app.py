@@ -202,26 +202,30 @@ def mix_audio(job_id):
     vocal_path = job_dir / "vocal_raw.webm"
     vocal_file.save(str(vocal_path))
 
-    # webm -> wav
-    vocal_wav = job_dir / "vocal.wav"
-    subprocess.run([
-        "ffmpeg", "-y", "-i", str(vocal_path),
-        "-ar", "44100", "-ac", "2", str(vocal_wav)
-    ], check=True, capture_output=True)
+    try:
+        # webm -> wav
+        vocal_wav = job_dir / "vocal.wav"
+        subprocess.run([
+            "ffmpeg", "-y", "-i", str(vocal_path),
+            "-ar", "44100", "-ac", "2", str(vocal_wav)
+        ], check=True, capture_output=True)
 
-    # 混音：伴奏 + 人声，人声音量 1.5x
-    mixed_path = job_dir / "mixed.mp3"
-    subprocess.run([
-        "ffmpeg", "-y",
-        "-i", str(accompaniment),
-        "-i", str(vocal_wav),
-        "-filter_complex", "[0:a][1:a]amix=inputs=2:duration=longest:weights=1 1.5[out]",
-        "-map", "[out]",
-        "-codec:a", "libmp3lame", "-b:a", "192k",
-        str(mixed_path)
-    ], check=True, capture_output=True)
+        # 混音：伴奏 + 人声，人声音量 1.5x
+        mixed_path = job_dir / "mixed.mp3"
+        subprocess.run([
+            "ffmpeg", "-y",
+            "-i", str(accompaniment),
+            "-i", str(vocal_wav),
+            "-filter_complex", "[0:a][1:a]amix=inputs=2:duration=longest:weights=1|1.5[out]",
+            "-map", "[out]",
+            "-codec:a", "libmp3lame", "-b:a", "192k",
+            str(mixed_path)
+        ], check=True, capture_output=True)
 
-    return jsonify({"mixed_url": f"/output/{job_id}/mixed.mp3"})
+        return jsonify({"mixed_url": f"/output/{job_id}/mixed.mp3"})
+    except subprocess.CalledProcessError as e:
+        stderr = (e.stderr or b"").decode(errors="ignore") if isinstance(e.stderr, bytes) else (e.stderr or "")
+        return jsonify({"error": f"混音处理失败: {stderr[-300:] if stderr else str(e)}"}), 500
 
 
 @app.route("/output/<job_id>/mixed.mp3")
