@@ -5,11 +5,9 @@ K歌伴奏生成器 - 本地 Web 服务
 """
 
 import json as _json
-import os
 import shutil
 import subprocess
 import sys
-import threading
 import uuid
 from pathlib import Path
 
@@ -25,7 +23,6 @@ ALLOWED_EXTENSIONS = {".mp3", ".wav", ".m4a", ".flac", ".ogg", ".aac", ".webm", 
 
 
 def get_device():
-    """检测最佳可用设备"""
     try:
         import torch
         if torch.backends.mps.is_available():
@@ -38,17 +35,19 @@ def get_device():
 
 
 def download_audio(url: str, job_dir: Path):
-    """用 yt-dlp 下载音频，返回 (文件路径, 标题)"""
-    # 先获取 metadata（不下载）
+    """用 yt-dlp 下载音频，返回 (文件路径, 标题, video_id)"""
     meta_cmd = [
         sys.executable, "-m", "yt_dlp",
         "--skip-download", "--print-json", "--quiet", "--no-playlist", url,
     ]
     meta_result = subprocess.run(meta_cmd, capture_output=True, text=True)
-    title = url  # fallback
+    title = url
+    video_id = None
     if meta_result.returncode == 0 and meta_result.stdout.strip():
         try:
-            title = _json.loads(meta_result.stdout)["title"]
+            info = _json.loads(meta_result.stdout)
+            title = info.get("title", url)
+            video_id = info.get("id")
         except Exception:
             pass
 
@@ -62,7 +61,7 @@ def download_audio(url: str, job_dir: Path):
     subprocess.run(cmd, check=True, capture_output=True, text=True)
     for f in job_dir.iterdir():
         if f.stem == "source":
-            return f, title
+            return f, title, video_id
     raise FileNotFoundError("yt-dlp 下载后找不到音频文件")
 
 
@@ -80,12 +79,10 @@ def separate_vocals(audio_path: Path, job_dir: Path) -> Path:
     ]
     subprocess.run(cmd, check=True, capture_output=True, text=True)
 
-    # Demucs 输出结构: demucs_out/htdemucs/<stem>/no_vocals.wav
     no_vocals_wav = demucs_out / "htdemucs" / audio_path.stem / "no_vocals.wav"
     if not no_vocals_wav.exists():
         raise FileNotFoundError(f"Demucs 输出文件不存在: {no_vocals_wav}")
 
-    # 转换为 mp3
     accompaniment_mp3 = job_dir / "accompaniment.mp3"
     ffmpeg_cmd = [
         "ffmpeg", "-y",
@@ -94,24 +91,7 @@ def separate_vocals(audio_path: Path, job_dir: Path) -> Path:
         str(accompaniment_mp3),
     ]
     subprocess.run(ffmpeg_cmd, check=True, capture_output=True, text=True)
-
     return accompaniment_mp3
-
-
-def _fetch_and_save_lyrics(url: str, audio_path: Path, job_dir: Path):
-    """后台线程：获取歌词并写入 lyrics.json"""
-    try:
-        from karaoke import get_lyrics
-        lyrics = get_lyrics(url if url else None, audio_path, job_dir)
-        data = {"status": "done", "lines": [{"start": l.start, "end": l.end, "text": l.text} for l in lyrics]}
-    except Exception as e:
-        import logging
-        logging.warning(f"lyrics fetch failed: {e}")
-        data = {"status": "error", "lines": []}
-    # atomic write: tmp file + rename
-    tmp = job_dir / "lyrics.json.tmp"
-    tmp.write_text(_json.dumps(data, ensure_ascii=False))
-    tmp.rename(job_dir / "lyrics.json")
 
 
 @app.route("/")
@@ -130,7 +110,7 @@ def process():
         uploaded_file = request.files.get("file")
 
         if url:
-            audio_path, title = download_audio(url, job_dir)
+            audio_path, title, video_id = download_audio(url, job_dir)
         elif uploaded_file and uploaded_file.filename:
             suffix = Path(uploaded_file.filename).suffix.lower()
             if suffix not in ALLOWED_EXTENSIONS:
@@ -139,23 +119,18 @@ def process():
             audio_path = job_dir / f"source{suffix}"
             uploaded_file.save(str(audio_path))
             title = uploaded_file.filename
+            video_id = None
         else:
             shutil.rmtree(job_dir, ignore_errors=True)
             return jsonify({"error": "请输入 YouTube 链接或上传音频文件"}), 400
 
-        accompaniment_path = separate_vocals(audio_path, job_dir)
-
-        threading.Thread(
-            target=_fetch_and_save_lyrics,
-            args=(url, audio_path, job_dir),
-            daemon=True
-        ).start()
+        separate_vocals(audio_path, job_dir)
 
         return jsonify({
             "job_id": job_id,
             "title": title,
+            "video_id": video_id,
             "accompaniment_url": f"/output/{job_id}/accompaniment.mp3",
-            "lyrics_url": f"/lyrics/{job_id}",
         })
 
     except subprocess.CalledProcessError as e:
@@ -169,7 +144,6 @@ def process():
 
 @app.route("/output/<job_id>/accompaniment.mp3")
 def serve_output(job_id):
-    # 防止路径穿越
     safe_id = Path(job_id).name
     mp3_path = OUTPUTS_DIR / safe_id / "accompaniment.mp3"
     if not mp3_path.exists():
@@ -187,81 +161,9 @@ def download_output(job_id):
                      download_name="accompaniment.mp3")
 
 
-@app.route("/mix/<job_id>", methods=["POST"])
-def mix_audio(job_id):
-    safe_id = Path(job_id).name
-    job_dir = OUTPUTS_DIR / safe_id
-    accompaniment = job_dir / "accompaniment.mp3"
-    if not accompaniment.exists():
-        return jsonify({"error": "任务不存在"}), 404
-
-    vocal_file = request.files.get("audio")
-    if not vocal_file:
-        return jsonify({"error": "未上传录音文件"}), 400
-
-    vocal_path = job_dir / "vocal_raw.webm"
-    vocal_file.save(str(vocal_path))
-
-    try:
-        # webm -> wav
-        vocal_wav = job_dir / "vocal.wav"
-        subprocess.run([
-            "ffmpeg", "-y", "-i", str(vocal_path),
-            "-ar", "44100", "-ac", "2", str(vocal_wav)
-        ], check=True, capture_output=True)
-
-        # 混音：伴奏 + 人声，人声音量 1.5x
-        mixed_path = job_dir / "mixed.mp3"
-        subprocess.run([
-            "ffmpeg", "-y",
-            "-i", str(accompaniment),
-            "-i", str(vocal_wav),
-            "-filter_complex", "[0:a][1:a]amix=inputs=2:duration=longest:weights=1|1.5[out]",
-            "-map", "[out]",
-            "-codec:a", "libmp3lame", "-b:a", "192k",
-            str(mixed_path)
-        ], check=True, capture_output=True)
-
-        return jsonify({"mixed_url": f"/output/{job_id}/mixed.mp3"})
-    except subprocess.CalledProcessError as e:
-        stderr = (e.stderr or b"").decode(errors="ignore") if isinstance(e.stderr, bytes) else (e.stderr or "")
-        return jsonify({"error": f"混音处理失败: {stderr[-300:] if stderr else str(e)}"}), 500
-
-
-@app.route("/output/<job_id>/mixed.mp3")
-def serve_mixed(job_id):
-    safe_id = Path(job_id).name
-    mp3_path = OUTPUTS_DIR / safe_id / "mixed.mp3"
-    if not mp3_path.exists():
-        return jsonify({"error": "文件不存在"}), 404
-    return send_file(str(mp3_path), mimetype="audio/mpeg", as_attachment=False)
-
-
-@app.route("/download/<job_id>/mixed.mp3")
-def download_mixed(job_id):
-    safe_id = Path(job_id).name
-    mp3_path = OUTPUTS_DIR / safe_id / "mixed.mp3"
-    if not mp3_path.exists():
-        return jsonify({"error": "文件不存在"}), 404
-    return send_file(str(mp3_path), mimetype="audio/mpeg", as_attachment=True,
-                     download_name="my_karaoke.mp3")
-
-
 @app.route("/health")
 def health():
     return jsonify({"status": "ok", "device": get_device()})
-
-
-@app.route("/lyrics/<job_id>")
-def serve_lyrics(job_id):
-    safe_id = Path(job_id).name
-    job_dir = OUTPUTS_DIR / safe_id
-    if not job_dir.exists():
-        return jsonify({"error": "任务不存在"}), 404
-    lyrics_path = job_dir / "lyrics.json"
-    if not lyrics_path.exists():
-        return jsonify({"status": "processing"}), 202
-    return jsonify(_json.loads(lyrics_path.read_text()))
 
 
 if __name__ == "__main__":
