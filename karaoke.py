@@ -33,7 +33,7 @@ def parse_vtt(content: str) -> List[LyricLine]:
     pattern = re.compile(
         r"(\d[\d:,.]+)\s+-->\s+(\d[\d:,.]+)\s*\n([\s\S]+)"
     )
-    seen_texts = set()
+    seen_keys = set()
     for block in blocks:
         m = pattern.search(block)
         if not m:
@@ -42,9 +42,10 @@ def parse_vtt(content: str) -> List[LyricLine]:
         end = _timestamp_to_seconds(m.group(2))
         text = re.sub(r"<[^>]+>", "", m.group(3)).strip()
         text = re.sub(r"\s+", " ", text)
-        if not text or text in seen_texts:
+        key = (start, text)
+        if not text or key in seen_keys:
             continue
-        seen_texts.add(text)
+        seen_keys.add(key)
         lines.append(LyricLine(start=start, end=end, text=text))
     return lines
 
@@ -62,7 +63,11 @@ def fetch_youtube_subtitles(url: str, job_dir: Path) -> Optional[List[LyricLine]
             "--quiet",
             url,
         ]
-        subprocess.run(cmd, capture_output=True)
+        result = subprocess.run(cmd, capture_output=True)
+        if result.returncode != 0:
+            import logging
+            logging.warning("yt-dlp exited with code %d; skipping subtitle glob", result.returncode)
+            continue
         for f in job_dir.glob("subtitle*.vtt"):
             content = f.read_text(encoding="utf-8", errors="ignore")
             lines = parse_vtt(content)
@@ -94,4 +99,6 @@ def get_lyrics(url: Optional[str], audio_path: Path, job_dir: Path) -> List[Lyri
         lines = fetch_youtube_subtitles(url, job_dir)
         if lines:
             return lines
+    if not audio_path.exists():
+        raise FileNotFoundError(f"Audio file not found: {audio_path}")
     return transcribe_with_whisper(audio_path)
