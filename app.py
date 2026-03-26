@@ -4,10 +4,12 @@ K歌伴奏生成器 - 本地 Web 服务
 支持 YouTube 链接或本地音频文件，使用 Demucs htdemucs 去除人声
 """
 
+import json as _json
 import os
 import shutil
 import subprocess
 import sys
+import threading
 import uuid
 from pathlib import Path
 
@@ -35,22 +37,32 @@ def get_device():
     return "cpu"
 
 
-def download_audio(url: str, job_dir: Path) -> Path:
-    """用 yt-dlp 下载音频，返回文件路径"""
+def download_audio(url: str, job_dir: Path):
+    """用 yt-dlp 下载音频，返回 (文件路径, 标题)"""
+    # 先获取 metadata（不下载）
+    meta_cmd = [
+        sys.executable, "-m", "yt_dlp",
+        "--skip-download", "--print-json", "--quiet", "--no-playlist", url,
+    ]
+    meta_result = subprocess.run(meta_cmd, capture_output=True, text=True)
+    title = url  # fallback
+    if meta_result.returncode == 0 and meta_result.stdout.strip():
+        try:
+            title = _json.loads(meta_result.stdout)["title"]
+        except Exception:
+            pass
+
     outtmpl = str(job_dir / "source.%(ext)s")
     cmd = [
         sys.executable, "-m", "yt_dlp",
         "--format", "bestaudio/best",
         "--output", outtmpl,
-        "--no-playlist",
-        "--quiet",
-        url,
+        "--no-playlist", "--quiet", url,
     ]
     subprocess.run(cmd, check=True, capture_output=True, text=True)
-    # 找到下载的文件
     for f in job_dir.iterdir():
         if f.stem == "source":
-            return f
+            return f, title
     raise FileNotFoundError("yt-dlp 下载后找不到音频文件")
 
 
@@ -86,6 +98,17 @@ def separate_vocals(audio_path: Path, job_dir: Path) -> Path:
     return accompaniment_mp3
 
 
+def _fetch_and_save_lyrics(url: str, audio_path: Path, job_dir: Path):
+    """后台线程：获取歌词并写入 lyrics.json。url 为空时直接走 Whisper。"""
+    try:
+        from karaoke import get_lyrics
+        lyrics = get_lyrics(url if url else None, audio_path, job_dir)
+        data = [{"start": l.start, "end": l.end, "text": l.text} for l in lyrics]
+    except Exception:
+        data = []
+    (job_dir / "lyrics.json").write_text(_json.dumps(data, ensure_ascii=False))
+
+
 @app.route("/")
 def index():
     return render_template("index.html")
@@ -102,9 +125,7 @@ def process():
         uploaded_file = request.files.get("file")
 
         if url:
-            # YouTube 或其他 URL
-            audio_path = download_audio(url, job_dir)
-            title = url
+            audio_path, title = download_audio(url, job_dir)
         elif uploaded_file and uploaded_file.filename:
             suffix = Path(uploaded_file.filename).suffix.lower()
             if suffix not in ALLOWED_EXTENSIONS:
@@ -119,10 +140,17 @@ def process():
 
         accompaniment_path = separate_vocals(audio_path, job_dir)
 
+        threading.Thread(
+            target=_fetch_and_save_lyrics,
+            args=(url, audio_path, job_dir),
+            daemon=True
+        ).start()
+
         return jsonify({
             "job_id": job_id,
             "title": title,
             "accompaniment_url": f"/output/{job_id}/accompaniment.mp3",
+            "lyrics_url": f"/lyrics/{job_id}",
         })
 
     except subprocess.CalledProcessError as e:
@@ -157,6 +185,18 @@ def download_output(job_id):
 @app.route("/health")
 def health():
     return jsonify({"status": "ok", "device": get_device()})
+
+
+@app.route("/lyrics/<job_id>")
+def serve_lyrics(job_id):
+    safe_id = Path(job_id).name
+    job_dir = OUTPUTS_DIR / safe_id
+    if not job_dir.exists():
+        return jsonify({"error": "任务不存在"}), 404
+    lyrics_path = job_dir / "lyrics.json"
+    if not lyrics_path.exists():
+        return jsonify({"status": "processing"}), 202
+    return jsonify(_json.loads(lyrics_path.read_text()))
 
 
 if __name__ == "__main__":
