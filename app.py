@@ -192,7 +192,7 @@ def fetch_lyrics(title: str, url: str, job_dir: Path) -> dict:
         # --- Tier 2: syncedlyrics synced (LRC with timestamps) ---
         try:
             import syncedlyrics
-            lrc = syncedlyrics.search(title, allow_plain_format=False)
+            lrc = syncedlyrics.search(title, synced_only=True)
             if lrc:
                 parsed = parse_lrc(lrc)
                 if parsed:
@@ -203,13 +203,11 @@ def fetch_lyrics(title: str, url: str, job_dir: Path) -> dict:
         # --- Tier 3: syncedlyrics plain text ---
         try:
             import syncedlyrics
-            lrc = syncedlyrics.search(title, allow_plain_format=True, enhanced=False)
+            lrc = syncedlyrics.search(title, plain_only=True)
             if lrc:
-                # Check if it actually has timestamps; if so parse as synced
                 parsed = parse_lrc(lrc)
                 if parsed:
                     return {"type": "synced", "lines": parsed, "source": "syncedlyrics"}
-                # Otherwise treat as plain text
                 stripped = lrc.strip()
                 if stripped:
                     return {"type": "plain", "text": stripped, "source": "syncedlyrics"}
@@ -256,8 +254,9 @@ def fetch_lyrics(title: str, url: str, job_dir: Path) -> dict:
                 with urllib.request.urlopen(req, timeout=60) as resp:
                     return _json.loads(resp.read())
 
-            # Tool-call loop: Kimi may call $web_search once before answering
-            for _ in range(3):
+            # Tool-call loop: Kimi may call $web_search multiple times before answering
+            _invalid_phrases = ("让我重新搜索", "让我搜索", "我来搜索", "我需要搜索", "请稍等")
+            for _ in range(5):
                 result = _kimi_request(messages)
                 choice = result["choices"][0]
                 finish_reason = choice["finish_reason"]
@@ -273,9 +272,15 @@ def fetch_lyrics(title: str, url: str, job_dir: Path) -> dict:
                         })
                 else:
                     text = (msg.get("content") or "").strip()
-                    if text:
+                    # Filter out responses that are just stalling phrases without actual lyrics
+                    if text and not any(p in text for p in _invalid_phrases):
                         return {"type": "plain", "text": text, "source": "Kimi"}
-                    break
+                    # If Kimi stalled, add a follow-up nudge and retry
+                    elif text:
+                        messages.append(msg)
+                        messages.append({"role": "user", "content": "请直接输出歌词，不需要解释。"})
+                    else:
+                        break
 
     except Exception:
         pass
