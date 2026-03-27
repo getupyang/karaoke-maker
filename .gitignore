@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+
+# 处理输出（含个人音频）
+outputs/
+
+# 编辑器 / 系统
+.DS_Store
+.claude/
+
+# 开发工具
+*.egg-info/
