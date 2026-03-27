@@ -246,7 +246,7 @@ def fetch_lyrics(title: str, url: str, job_dir: Path) -> dict:
                     "tools": tools,
                 }).encode()
                 req = urllib.request.Request(
-                    "https://api.moonshot.ai/v1/chat/completions",
+                    "https://api.moonshot.cn/v1/chat/completions",
                     data=payload,
                     headers={
                         "Content-Type": "application/json",
