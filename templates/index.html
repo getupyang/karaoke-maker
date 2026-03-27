@@ -145,8 +145,6 @@
   </div>
 
   <script>
-    let selectedVideoId = null;
-    let selectedUrl = null;
 
     // ── 搜索 ──────────────────────────────────────────────────────
     document.getElementById('searchInput').addEventListener('keydown', e => {
@@ -186,34 +184,28 @@
       }
     }
 
+    // 用事件委托处理搜索结果点击，避免 innerHTML 时序问题
+    document.getElementById('searchResults').addEventListener('click', function(e) {
+      const card = e.target.closest('.video-card');
+      if (!card) return;
+      // 高亮选中
+      document.querySelectorAll('.video-card').forEach(el => el.classList.remove('selected'));
+      card.classList.add('selected');
+      // 把 URL 填入输入框
+      document.getElementById('urlInput').value = card.dataset.url;
+    });
+
     function renderResults(videos) {
       const container = document.getElementById('searchResults');
-      container.innerHTML = '';
-      videos.forEach((v, i) => {
+      container.innerHTML = videos.map((v, i) => {
         const dur = v.duration ? fmtDuration(v.duration) : '';
-        const card = document.createElement('div');
-        card.className = 'video-card';
-        card.id = 'vc' + i;
-        card.dataset.videoId = v.id;
-        card.dataset.url = v.url;
-        card.innerHTML = '<img src="' + escapeHtml(v.thumbnail) + '" onerror="this.style.display=\'none\'">'
+        return '<div class="video-card" id="vc' + i + '" data-url="' + escapeHtml(v.url) + '">'
+          + '<img src="' + escapeHtml(v.thumbnail) + '" onerror="this.style.display=\'none\'">'
           + '<div class="video-info">'
           + '<div class="video-title">' + escapeHtml(v.title) + '</div>'
           + (dur ? '<div class="video-duration">' + dur + '</div>' : '')
-          + '</div>';
-        card.addEventListener('click', () => selectVideo(i, v.id, v.url));
-        container.appendChild(card);
-      });
-    }
-
-    function selectVideo(i, videoId, url) {
-      document.querySelectorAll('.video-card').forEach(el => el.classList.remove('selected'));
-      document.getElementById('vc' + i).classList.add('selected');
-      selectedVideoId = videoId;
-      selectedUrl = url;
-      // 清空手动输入
-      document.getElementById('urlInput').value = '';
-      document.getElementById('fileInput').value = '';
+          + '</div></div>';
+      }).join('');
     }
 
     function fmtDuration(s) {
@@ -224,9 +216,8 @@
 
     // ── 生成伴奏 ──────────────────────────────────────────────────
     async function doGenerate() {
-      const manualUrl = document.getElementById('urlInput').value.trim();
+      const url = document.getElementById('urlInput').value.trim();
       const file = document.getElementById('fileInput').files[0];
-      const url = selectedUrl || manualUrl;
 
       if (!url && !file) {
         showError('请搜索并选择一首歌，或输入链接/上传文件');
