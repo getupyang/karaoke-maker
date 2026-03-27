@@ -188,15 +188,22 @@
 
     function renderResults(videos) {
       const container = document.getElementById('searchResults');
-      container.innerHTML = videos.map((v, i) => {
+      container.innerHTML = '';
+      videos.forEach((v, i) => {
         const dur = v.duration ? fmtDuration(v.duration) : '';
-        return '<div class="video-card" id="vc' + i + '" onclick="selectVideo(' + i + ', ' + JSON.stringify(v.id) + ', ' + JSON.stringify(v.url) + ')">'
-          + '<img src="' + escapeHtml(v.thumbnail) + '" onerror="this.style.display=\'none\'">'
+        const card = document.createElement('div');
+        card.className = 'video-card';
+        card.id = 'vc' + i;
+        card.dataset.videoId = v.id;
+        card.dataset.url = v.url;
+        card.innerHTML = '<img src="' + escapeHtml(v.thumbnail) + '" onerror="this.style.display=\'none\'">'
           + '<div class="video-info">'
           + '<div class="video-title">' + escapeHtml(v.title) + '</div>'
           + (dur ? '<div class="video-duration">' + dur + '</div>' : '')
-          + '</div></div>';
-      }).join('');
+          + '</div>';
+        card.addEventListener('click', () => selectVideo(i, v.id, v.url));
+        container.appendChild(card);
+      });
     }
 
     function selectVideo(i, videoId, url) {
