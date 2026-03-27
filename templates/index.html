@@ -116,6 +116,19 @@
       background: #2a1010; border: 1px solid #7f1d1d; border-radius: 8px;
       padding: 14px; color: #fca5a5; font-size: 0.85rem; white-space: pre-wrap; word-break: break-all;
     }
+    .lyrics-panel {
+      background: #0f0f1a; border-radius: 10px; padding: 16px;
+      margin-top: 12px; max-height: 220px; overflow-y: auto;
+      scroll-behavior: smooth;
+    }
+    .lyric-line {
+      text-align: center; padding: 6px 4px; font-size: 0.88rem;
+      color: #666; line-height: 1.6; transition: color 0.3s;
+      cursor: default;
+    }
+    .lyric-line.active {
+      color: #c084fc; font-size: 0.95rem; font-weight: 600;
+    }
   </style>
 </head>
 <body>
@@ -255,14 +268,65 @@
         videoHtml = '<div class="yt-wrap"><iframe src="' + embedUrl
           + '" allowfullscreen allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"></iframe></div>';
       }
+
+      // Build lyrics panel HTML
+      let lyricsHtml = '';
+      const lyrics = data.lyrics;
+      if (lyrics && lyrics.type === 'synced' && lyrics.lines && lyrics.lines.length > 0) {
+        const linesHtml = lyrics.lines.map(function(line, idx) {
+          return '<div class="lyric-line" data-time="' + line.time + '" data-idx="' + idx + '">'
+            + escapeHtml(line.text) + '</div>';
+        }).join('');
+        lyricsHtml = '<div class="lyrics-panel" id="lyricsPanel">' + linesHtml + '</div>';
+      } else if (lyrics && lyrics.type === 'plain' && lyrics.text) {
+        lyricsHtml = '<div class="lyrics-panel" id="lyricsPanel">'
+          + '<div style="white-space:pre-wrap;color:#aaa;font-size:0.88rem;line-height:1.7;">'
+          + escapeHtml(lyrics.text) + '</div></div>';
+      } else {
+        lyricsHtml = '<div style="margin-top:10px;font-size:0.8rem;color:#444;text-align:center;">暂无歌词</div>';
+      }
+
       statusDiv.innerHTML = '<div class="song-title">' + escapeHtml(data.title) + '</div>'
         + videoHtml
         + '<div class="player-section">'
         + '<div class="player-label">伴奏（调高音量，对着视频唱）</div>'
-        + '<audio controls src="' + escapeHtml(data.accompaniment_url) + '" preload="auto"></audio>'
+        + '<audio id="accompanimentAudio" controls src="' + escapeHtml(data.accompaniment_url) + '" preload="auto"></audio>'
         + '<a class="download-btn" href="/download/' + escapeHtml(data.job_id) + '/accompaniment.mp3" download>下载伴奏 MP3</a>'
         + '<div class="hint">先点视频播放（视频静音只看字幕），再点伴奏播放，跟着唱。</div>'
-        + '</div>';
+        + '</div>'
+        + lyricsHtml;
+
+      // Wire up synced lyrics highlighting
+      if (lyrics && lyrics.type === 'synced' && lyrics.lines && lyrics.lines.length > 0) {
+        const audioEl = document.getElementById('accompanimentAudio');
+        const panel = document.getElementById('lyricsPanel');
+        const lineEls = panel ? panel.querySelectorAll('.lyric-line') : [];
+        const times = lyrics.lines.map(function(l) { return l.time; });
+
+        audioEl.addEventListener('timeupdate', function() {
+          const ct = audioEl.currentTime;
+          // Find last line whose time <= ct
+          let activeIdx = -1;
+          for (let i = 0; i < times.length; i++) {
+            if (times[i] <= ct) activeIdx = i;
+            else break;
+          }
+          lineEls.forEach(function(el, i) {
+            if (i === activeIdx) {
+              if (!el.classList.contains('active')) {
+                el.classList.add('active');
+                // Auto-scroll to keep active line centered
+                const panelRect = panel.getBoundingClientRect();
+                const elRect = el.getBoundingClientRect();
+                const offset = elRect.top - panelRect.top - panel.clientHeight / 2 + el.clientHeight / 2;
+                panel.scrollTop += offset;
+              }
+            } else {
+              el.classList.remove('active');
+            }
+          });
+        });
+      }
     }
 
     function showSpinner(msg) {
