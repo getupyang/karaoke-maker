@@ -21,6 +21,10 @@ def test_process_no_input(client):
     data = json.loads(resp.data)
     assert "error" in data
 
+def test_search_no_query(client):
+    resp = client.get("/search")
+    assert resp.status_code == 400
+
 def test_output_not_found(client):
     resp = client.get("/output/nonexistent/accompaniment.mp3")
     assert resp.status_code == 404

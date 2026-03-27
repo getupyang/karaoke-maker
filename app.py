@@ -94,6 +94,41 @@ def separate_vocals(audio_path: Path, job_dir: Path) -> Path:
     return accompaniment_mp3
 
 
+@app.route("/search")
+def search():
+    query = request.args.get("q", "").strip()
+    if not query:
+        return jsonify({"error": "请输入搜索词"}), 400
+    cmd = [
+        sys.executable, "-m", "yt_dlp",
+        f"ytsearch5:{query}",
+        "--skip-download", "--print-json", "--quiet", "--no-playlist",
+        "--flat-playlist",
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    videos = []
+    for line in result.stdout.strip().splitlines():
+        if not line:
+            continue
+        try:
+            info = _json.loads(line)
+            vid_id = info.get("id") or info.get("url", "").split("v=")[-1]
+            title = info.get("title", "")
+            duration = info.get("duration")
+            thumbnail = info.get("thumbnail") or f"https://i.ytimg.com/vi/{vid_id}/mqdefault.jpg"
+            if vid_id and title:
+                videos.append({
+                    "id": vid_id,
+                    "title": title,
+                    "duration": duration,
+                    "thumbnail": thumbnail,
+                    "url": f"https://www.youtube.com/watch?v={vid_id}",
+                })
+        except Exception:
+            continue
+    return jsonify(videos)
+
+
 @app.route("/")
 def index():
     return render_template("index.html")
