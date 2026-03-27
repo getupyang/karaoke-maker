@@ -129,6 +129,15 @@
     .lyric-line.active {
       color: #c084fc; font-size: 0.95rem; font-weight: 600;
     }
+    .lyrics-source {
+      display: block; text-align: right; font-size: 0.72rem;
+      color: #555; margin-bottom: 8px;
+    }
+    .lyrics-meta {
+      text-align: center; font-size: 0.85rem; color: #888;
+      margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid #222;
+    }
+    .lyrics-meta-sep { margin: 0 6px; color: #555; }
   </style>
 </head>
 <body>
@@ -273,15 +282,33 @@
       let lyricsHtml = '';
       const lyrics = data.lyrics;
       if (lyrics && lyrics.type === 'synced' && lyrics.lines && lyrics.lines.length > 0) {
+        const sourceTag = lyrics.source
+          ? '<span class="lyrics-source">' + escapeHtml(lyrics.source) + '</span>' : '';
         const linesHtml = lyrics.lines.map(function(line, idx) {
           return '<div class="lyric-line" data-time="' + line.time + '" data-idx="' + idx + '">'
             + escapeHtml(line.text) + '</div>';
         }).join('');
-        lyricsHtml = '<div class="lyrics-panel" id="lyricsPanel">' + linesHtml + '</div>';
-      } else if (lyrics && lyrics.type === 'plain' && lyrics.text) {
         lyricsHtml = '<div class="lyrics-panel" id="lyricsPanel">'
+          + sourceTag + linesHtml + '</div>';
+      } else if (lyrics && lyrics.type === 'plain' && lyrics.text) {
+        const sourceTag = lyrics.source
+          ? '<span class="lyrics-source">' + escapeHtml(lyrics.source) + '</span>' : '';
+        // Parse "歌名：xxx\n歌手：xxx\n\n歌词正文" format from DeepSeek
+        let displayText = lyrics.text;
+        let metaHtml = '';
+        const metaMatch = lyrics.text.match(/^歌名[：:]\s*(.+)\n歌手[：:]\s*(.+)\n+([\s\S]+)$/);
+        if (metaMatch) {
+          metaHtml = '<div class="lyrics-meta">'
+            + '<span>' + escapeHtml(metaMatch[1].trim()) + '</span>'
+            + '<span class="lyrics-meta-sep">·</span>'
+            + '<span>' + escapeHtml(metaMatch[2].trim()) + '</span>'
+            + '</div>';
+          displayText = metaMatch[3].trim();
+        }
+        lyricsHtml = '<div class="lyrics-panel" id="lyricsPanel">'
+          + sourceTag + metaHtml
           + '<div style="white-space:pre-wrap;color:#aaa;font-size:0.88rem;line-height:1.7;">'
-          + escapeHtml(lyrics.text) + '</div></div>';
+          + escapeHtml(displayText) + '</div></div>';
       } else {
         lyricsHtml = '<div style="margin-top:10px;font-size:0.8rem;color:#444;text-align:center;">暂无歌词</div>';
       }

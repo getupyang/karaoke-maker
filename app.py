@@ -185,7 +185,7 @@ def fetch_lyrics(title: str, url: str, job_dir: Path) -> dict:
                     vtt_text = vtt_files[0].read_text(encoding="utf-8", errors="replace")
                     parsed = parse_vtt(vtt_text)
                     if parsed:
-                        return {"type": "synced", "lines": parsed}
+                        return {"type": "synced", "lines": parsed, "source": "YouTube字幕"}
             except Exception:
                 pass
 
@@ -196,7 +196,7 @@ def fetch_lyrics(title: str, url: str, job_dir: Path) -> dict:
             if lrc:
                 parsed = parse_lrc(lrc)
                 if parsed:
-                    return {"type": "synced", "lines": parsed}
+                    return {"type": "synced", "lines": parsed, "source": "syncedlyrics"}
         except Exception:
             pass
 
@@ -208,11 +208,11 @@ def fetch_lyrics(title: str, url: str, job_dir: Path) -> dict:
                 # Check if it actually has timestamps; if so parse as synced
                 parsed = parse_lrc(lrc)
                 if parsed:
-                    return {"type": "synced", "lines": parsed}
+                    return {"type": "synced", "lines": parsed, "source": "syncedlyrics"}
                 # Otherwise treat as plain text
                 stripped = lrc.strip()
                 if stripped:
-                    return {"type": "plain", "text": stripped}
+                    return {"type": "plain", "text": stripped, "source": "syncedlyrics"}
         except Exception:
             pass
 
@@ -225,8 +225,13 @@ def fetch_lyrics(title: str, url: str, job_dir: Path) -> dict:
         if api_key and title:
             import urllib.request
             prompt = (
-                f"请提供歌曲《{title}》的完整歌词（原文，不要翻译，不要解释，直接输出歌词正文）。"
-                f"如果是英文歌曲请输出英文歌词。只输出歌词内容，不要任何前缀或说明文字。"
+                f"以下是一首歌的 YouTube 视频标题：{title}\n\n"
+                f"请从标题中识别歌手和歌名，然后输出该歌曲的完整原版歌词。\n"
+                f"输出格式严格如下（不要任何多余内容）：\n"
+                f"歌名：xxx\n"
+                f"歌手：xxx\n"
+                f"\n"
+                f"（歌词正文，每行一句，段落间空一行，不要重复同一句话除非原曲本身重复）"
             )
             payload = _json.dumps({
                 "model": "deepseek-chat",
@@ -246,7 +251,7 @@ def fetch_lyrics(title: str, url: str, job_dir: Path) -> dict:
                 result = _json.loads(resp.read())
             text = result["choices"][0]["message"]["content"].strip()
             if text:
-                return {"type": "plain", "text": text}
+                return {"type": "plain", "text": text, "source": "DeepSeek"}
     except Exception:
         pass
 
