@@ -5,6 +5,7 @@ K歌伴奏生成器 - 本地 Web 服务
 """
 
 import json as _json
+import os
 import re
 import shutil
 import subprocess
@@ -12,7 +13,10 @@ import sys
 import uuid
 from pathlib import Path
 
+from dotenv import load_dotenv
 from flask import Flask, jsonify, render_template, request, send_file
+
+load_dotenv(Path(__file__).parent / ".env")
 
 app = Flask(__name__)
 
@@ -212,6 +216,37 @@ def fetch_lyrics(title: str, url: str, job_dir: Path) -> dict:
         except Exception:
             pass
 
+    except Exception:
+        pass
+
+    # --- Tier 4: DeepSeek LLM fallback ---
+    try:
+        api_key = os.environ.get("DEEPSEEK_API_KEY", "")
+        if api_key and title:
+            import urllib.request
+            prompt = (
+                f"请提供歌曲《{title}》的完整歌词（原文，不要翻译，不要解释，直接输出歌词正文）。"
+                f"如果是英文歌曲请输出英文歌词。只输出歌词内容，不要任何前缀或说明文字。"
+            )
+            payload = _json.dumps({
+                "model": "deepseek-chat",
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0,
+                "max_tokens": 2000,
+            }).encode()
+            req = urllib.request.Request(
+                "https://api.deepseek.com/chat/completions",
+                data=payload,
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {api_key}",
+                },
+            )
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                result = _json.loads(resp.read())
+            text = result["choices"][0]["message"]["content"].strip()
+            if text:
+                return {"type": "plain", "text": text}
     except Exception:
         pass
 

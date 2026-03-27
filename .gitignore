@@ -14,3 +14,6 @@ outputs/
 
 # 开发工具
 *.egg-info/
+
+# 环境变量（含 API Key，勿提交）
+.env
