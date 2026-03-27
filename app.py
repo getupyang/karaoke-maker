@@ -219,39 +219,64 @@ def fetch_lyrics(title: str, url: str, job_dir: Path) -> dict:
     except Exception:
         pass
 
-    # --- Tier 4: DeepSeek LLM fallback ---
+    # --- Tier 4: Kimi 联网搜索歌词 ---
     try:
-        api_key = os.environ.get("DEEPSEEK_API_KEY", "")
+        api_key = os.environ.get("MOONSHOT_API_KEY", "")
         if api_key and title:
             import urllib.request
             prompt = (
                 f"以下是一首歌的 YouTube 视频标题：{title}\n\n"
-                f"请从标题中识别歌手和歌名，然后输出该歌曲的完整原版歌词。\n"
-                f"输出格式严格如下（不要任何多余内容）：\n"
+                f"请联网搜索该歌曲的完整原版歌词，然后按以下格式输出（不要任何多余内容）：\n"
                 f"歌名：xxx\n"
                 f"歌手：xxx\n"
                 f"\n"
-                f"（歌词正文，每行一句，段落间空一行，不要重复同一句话除非原曲本身重复）"
+                f"歌词正文（每行一句，段落间空一行）"
             )
-            payload = _json.dumps({
-                "model": "deepseek-chat",
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0,
-                "max_tokens": 2000,
-            }).encode()
-            req = urllib.request.Request(
-                "https://api.deepseek.com/chat/completions",
-                data=payload,
-                headers={
-                    "Content-Type": "application/json",
-                    "Authorization": f"Bearer {api_key}",
-                },
-            )
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                result = _json.loads(resp.read())
-            text = result["choices"][0]["message"]["content"].strip()
-            if text:
-                return {"type": "plain", "text": text, "source": "DeepSeek"}
+            messages = [
+                {"role": "user", "content": prompt}
+            ]
+            tools = [{"type": "builtin_function", "function": {"name": "$web_search"}}]
+
+            def _kimi_request(msgs):
+                payload = _json.dumps({
+                    "model": "kimi-k2.5",
+                    "messages": msgs,
+                    "max_tokens": 2000,
+                    "thinking": {"type": "disabled"},
+                    "tools": tools,
+                }).encode()
+                req = urllib.request.Request(
+                    "https://api.moonshot.ai/v1/chat/completions",
+                    data=payload,
+                    headers={
+                        "Content-Type": "application/json",
+                        "Authorization": f"Bearer {api_key}",
+                    },
+                )
+                with urllib.request.urlopen(req, timeout=60) as resp:
+                    return _json.loads(resp.read())
+
+            # Tool-call loop: Kimi may call $web_search once before answering
+            for _ in range(3):
+                result = _kimi_request(messages)
+                choice = result["choices"][0]
+                finish_reason = choice["finish_reason"]
+                msg = choice["message"]
+                if finish_reason == "tool_calls":
+                    messages.append(msg)
+                    for tc in msg.get("tool_calls", []):
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tc["id"],
+                            "name": tc["function"]["name"],
+                            "content": tc["function"].get("arguments", "{}"),
+                        })
+                else:
+                    text = (msg.get("content") or "").strip()
+                    if text:
+                        return {"type": "plain", "text": text, "source": "Kimi"}
+                    break
+
     except Exception:
         pass
 
