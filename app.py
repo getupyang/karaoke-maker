@@ -217,9 +217,9 @@ def fetch_lyrics(title: str, url: str, job_dir: Path) -> dict:
     except Exception:
         pass
 
-    # --- Tier 4: Kimi 联网搜索歌词 ---
+    # --- Tier 4: 通义千问联网搜索歌词 ---
     try:
-        api_key = os.environ.get("MOONSHOT_API_KEY", "")
+        api_key = os.environ.get("DASHSCOPE_API_KEY", "")
         if api_key and title:
             import urllib.request
             prompt = (
@@ -230,57 +230,25 @@ def fetch_lyrics(title: str, url: str, job_dir: Path) -> dict:
                 f"\n"
                 f"歌词正文（每行一句，段落间空一行）"
             )
-            messages = [
-                {"role": "user", "content": prompt}
-            ]
-            tools = [{"type": "builtin_function", "function": {"name": "$web_search"}}]
-
-            def _kimi_request(msgs):
-                payload = _json.dumps({
-                    "model": "kimi-k2.5",
-                    "messages": msgs,
-                    "max_tokens": 2000,
-                    "thinking": {"type": "disabled"},
-                    "tools": tools,
-                }).encode()
-                req = urllib.request.Request(
-                    "https://api.moonshot.cn/v1/chat/completions",
-                    data=payload,
-                    headers={
-                        "Content-Type": "application/json",
-                        "Authorization": f"Bearer {api_key}",
-                    },
-                )
-                with urllib.request.urlopen(req, timeout=60) as resp:
-                    return _json.loads(resp.read())
-
-            # Tool-call loop: Kimi may call $web_search multiple times before answering
-            _invalid_phrases = ("让我重新搜索", "让我搜索", "我来搜索", "我需要搜索", "请稍等")
-            for _ in range(5):
-                result = _kimi_request(messages)
-                choice = result["choices"][0]
-                finish_reason = choice["finish_reason"]
-                msg = choice["message"]
-                if finish_reason == "tool_calls":
-                    messages.append(msg)
-                    for tc in msg.get("tool_calls", []):
-                        messages.append({
-                            "role": "tool",
-                            "tool_call_id": tc["id"],
-                            "name": tc["function"]["name"],
-                            "content": tc["function"].get("arguments", "{}"),
-                        })
-                else:
-                    text = (msg.get("content") or "").strip()
-                    # Filter out responses that are just stalling phrases without actual lyrics
-                    if text and not any(p in text for p in _invalid_phrases):
-                        return {"type": "plain", "text": text, "source": "Kimi"}
-                    # If Kimi stalled, add a follow-up nudge and retry
-                    elif text:
-                        messages.append(msg)
-                        messages.append({"role": "user", "content": "请直接输出歌词，不需要解释。"})
-                    else:
-                        break
+            payload = _json.dumps({
+                "model": "qwen-plus",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 2000,
+                "enable_search": True,
+            }).encode()
+            req = urllib.request.Request(
+                "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+                data=payload,
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {api_key}",
+                },
+            )
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                result = _json.loads(resp.read())
+            text = (result["choices"][0]["message"].get("content") or "").strip()
+            if text:
+                return {"type": "plain", "text": text, "source": "通义千问"}
 
     except Exception:
         pass
